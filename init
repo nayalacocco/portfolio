@@ -1,0 +1,15 @@
+advisor-portfolio-mep/
+  app/
+  src/
+    ingest/
+    normalization/
+    classification/
+    fx/
+    portfolio/
+    metrics/
+    ui/
+  tests/
+  data_samples/
+  README.md
+  requirements.txt
+  .gitignore
