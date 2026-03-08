@@ -55,6 +55,24 @@ with st.expander("FX"):
 with st.expander("Posición"):
     st.dataframe(position.head(50), use_container_width=True)
 
+st.subheader("Diagnóstico de ingestión")
+for file_key, diag in frames.diagnostics.items():
+    with st.expander(f"Archivo: {file_key}"):
+        st.markdown(f"**Hoja usada:** `{diag.sheet_name}`")
+        st.markdown(f"**Fila detectada como header:** `{diag.header_row}`")
+        st.markdown("**Columnas crudas detectadas:**")
+        st.code(", ".join(diag.raw_columns) if diag.raw_columns else "(sin columnas detectadas)")
+        st.markdown("**Columnas normalizadas:**")
+        st.code(
+            ", ".join(diag.normalized_columns)
+            if diag.normalized_columns
+            else "(sin columnas normalizadas)"
+        )
+        st.markdown("**Aliases aplicados:**")
+        st.json(diag.aliases_applied or {"detalle": "sin aliases aplicados"})
+        st.markdown("**Preview normalizado (10 filas):**")
+        st.dataframe(diag.preview, use_container_width=True)
+
 if not warn_df.empty:
     st.warning("Se detectaron movimientos no reconocibles con reglas internas/externas.")
     st.dataframe(warn_df, use_container_width=True)
