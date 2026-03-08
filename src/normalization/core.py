@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pandas as pd
 
+from .dates import normalize_date_series
+
 
 class NormalizationError(ValueError):
     """Raised when a required normalization step fails."""
@@ -9,9 +11,11 @@ class NormalizationError(ValueError):
 
 def normalize_movements(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    out["fechaLiquidacion"] = pd.to_datetime(out["fechaLiquidacion"], errors="coerce").dt.date
+    out["fechaLiquidacion_raw"] = out["fechaLiquidacion"]
+    out["fechaLiquidacion"] = normalize_date_series(out["fechaLiquidacion"])
     if out["fechaLiquidacion"].isna().any():
         raise NormalizationError("Hay fechas de liquidación inválidas en movimientos.")
+    out["date_iso"] = out["fechaLiquidacion"].dt.strftime("%Y-%m-%d")
 
     out["tipoMovimiento"] = out["tipoMovimiento"].astype(str).str.strip()
     out["tipoMovimientoNorm"] = out["tipoMovimiento"].str.lower()
@@ -30,7 +34,8 @@ def normalize_movements(df: pd.DataFrame) -> pd.DataFrame:
 
 def normalize_fx(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
-    out["fecha"] = pd.to_datetime(out["fecha"], errors="coerce").dt.date
+    out["fecha"] = normalize_date_series(out["fecha"])
+    out["date_iso"] = out["fecha"].dt.strftime("%Y-%m-%d")
     out["tc_mep"] = pd.to_numeric(out["tc_mep"], errors="coerce")
     if "tc_cable" in out.columns:
         out["tc_cable"] = pd.to_numeric(out["tc_cable"], errors="coerce")
