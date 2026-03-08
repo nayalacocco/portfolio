@@ -60,24 +60,33 @@ def compute_metrics(
     start_date: date,
     end_date: date,
 ) -> MetricsResult:
+    # Flujos contables (perspectiva cuenta corriente): se conservan con su signo original.
     inflow = float(external_flows.loc[external_flows["flow_class"] == "external_inflow", "amount_usd_mep"].sum())
     outflow = float(external_flows.loc[external_flows["flow_class"] == "external_outflow", "amount_usd_mep"].sum())
-    net_flow = inflow - outflow
+    net_flow = inflow + outflow
 
-    result = end_value_usd - start_value_usd - inflow + outflow
-    nominal = (end_value_usd + outflow - inflow) / start_value_usd - 1 if start_value_usd else np.nan
+    # Flujos económicos (perspectiva inversor): se usan para métricas de retorno/TIR.
+    inflow_economic = float(
+        external_flows.loc[external_flows["flow_class"] == "external_inflow", "amount_usd_mep"].abs().sum()
+    )
+    outflow_economic = float(
+        external_flows.loc[external_flows["flow_class"] == "external_outflow", "amount_usd_mep"].abs().sum()
+    )
+
+    result = end_value_usd - start_value_usd - inflow_economic + outflow_economic
+    nominal = (end_value_usd + outflow_economic - inflow_economic) / start_value_usd - 1 if start_value_usd else np.nan
     period_rate = result / start_value_usd if start_value_usd else np.nan
 
     days = (end_date - start_date).days
     annual = (1 + period_rate) ** (365 / days) - 1 if days > 0 and pd.notna(period_rate) and period_rate > -1 else np.nan
 
-    cash_flows = [(start_date, -start_value_usd)]
-    cash_flows.extend(
-        (r.fechaLiquidacion, -r.amount_usd_mep if r.flow_class == "external_inflow" else r.amount_usd_mep)
+    cashflows_irr = [(start_date, -start_value_usd)]
+    cashflows_irr.extend(
+        (r.fechaLiquidacion, -abs(r.amount_usd_mep) if r.flow_class == "external_inflow" else abs(r.amount_usd_mep))
         for r in external_flows.itertuples()
     )
-    cash_flows.append((end_date, end_value_usd))
-    irr = xirr(cash_flows)
+    cashflows_irr.append((end_date, end_value_usd))
+    irr = xirr(cashflows_irr)
 
     return MetricsResult(
         valor_inicial_usd=start_value_usd,
