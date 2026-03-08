@@ -17,9 +17,19 @@ class InputFrames:
     position: pd.DataFrame
 
 
-REQUIRED_MOVEMENT_COLUMNS = {"fechaLiquidacion", "tipoMovimiento", "moneda", "monto"}
+REQUIRED_MOVEMENT_SOURCE_COLUMNS = {"fechaLiquidacion", "tipoOperacion", "total", "moneda"}
 REQUIRED_FX_COLUMNS = {"fecha", "tc_mep"}
 REQUIRED_POSITION_COLUMNS = {"ticker", "instrumento", "cantidad", "monto"}
+
+MOVEMENT_COLUMN_MAPPING: Dict[str, str] = {
+    "fechaLiquidacion": "date",
+    "tipoOperacion": "tipoMovimiento",
+    "total": "monto",
+    "moneda": "moneda",
+    "instrumento": "instrumento",
+    "cantidad": "cantidad",
+    "precio": "precio",
+}
 
 ALIASES: Dict[str, str] = {
     "fecha liquidacion": "fechaLiquidacion",
@@ -63,12 +73,24 @@ def _validate_columns(df: pd.DataFrame, required: set[str], name: str) -> None:
         )
 
 
+def _standardize_movements_schema(df: pd.DataFrame) -> pd.DataFrame:
+    _validate_columns(df, REQUIRED_MOVEMENT_SOURCE_COLUMNS, "movimientos")
+
+    available_mapping = {
+        source: target for source, target in MOVEMENT_COLUMN_MAPPING.items() if source in df.columns
+    }
+    out = df.rename(columns=available_mapping).copy()
+    # Compatibilidad con módulos existentes que todavía esperan fechaLiquidacion.
+    out["fechaLiquidacion"] = out["date"]
+    return out
+
+
 def load_inputs(movements_file, fx_file, position_file) -> InputFrames:
     movements = _read_excel(movements_file)
     fx = _read_excel(fx_file)
     position = _read_excel(position_file)
 
-    _validate_columns(movements, REQUIRED_MOVEMENT_COLUMNS, "movimientos")
+    movements = _standardize_movements_schema(movements)
     _validate_columns(fx, REQUIRED_FX_COLUMNS, "fx")
     _validate_columns(position, REQUIRED_POSITION_COLUMNS, "posicion")
 
