@@ -1,105 +1,75 @@
+import io
+
 import pandas as pd
 import pytest
 
 from src.ingest.parsing import IngestError, load_inputs
 
 
-def test_load_inputs_maps_real_movements_columns(monkeypatch):
-    movements_df = pd.DataFrame(
-        {
-            "fechaEjecucion": ["2024-01-01"],
-            "fechaLiquidacion": ["2024-01-02"],
-            "tipoOperacion": ["Compra"],
-            "instrumento": ["AL30"],
-            "moneda": ["ARS"],
-            "cantidad": [10],
-            "precio": [1000],
-            "montoBruto": [10000],
-            "comision": [100],
-            "iva": [21],
-            "otros": [0],
-            "total": [-10121],
-        }
+def _excel_bytes_from_sheet(raw_rows: list[list[object]], sheet_name: str = "Data"):
+    buffer = io.BytesIO()
+    pd.DataFrame(raw_rows).to_excel(buffer, index=False, header=False, sheet_name=sheet_name)
+    buffer.seek(0)
+    return buffer
+
+
+def test_load_inputs_detects_headers_aliases_and_normalizes_position():
+    movements_file = _excel_bytes_from_sheet(
+        [
+            ["reporte", None, None, None],
+            ["fecha liquidación", "tipo operación", "total", "moneda"],
+            ["2024-01-02", "Compra", "-10.121,50", "ARS"],
+        ],
+        sheet_name="Movs",
     )
-    fx_df = pd.DataFrame({"fecha": ["2024-01-02"], "tc_mep": [1100]})
-    position_df = pd.DataFrame(
-        {"ticker": ["AL30"], "instrumento": ["AL30"], "cantidad": [10], "monto": [10000]}
-    )
-
-    frames = iter([movements_df, fx_df, position_df])
-    monkeypatch.setattr(pd, "read_excel", lambda _file: next(frames))
-
-    out = load_inputs("movements.xlsx", "fx.xlsx", "position.xlsx")
-
-    assert "date" in out.movements.columns
-    assert "tipoMovimiento" in out.movements.columns
-    assert "monto" in out.movements.columns
-    assert out.movements.loc[0, "date"] == "2024-01-02"
-    assert out.movements.loc[0, "fechaLiquidacion"] == "2024-01-02"
-    assert out.movements.loc[0, "tipoMovimiento"] == "Compra"
-    assert out.movements.loc[0, "monto"] == -10121
-
-
-def test_load_inputs_requires_real_movements_source_columns(monkeypatch):
-    movements_df = pd.DataFrame(
-        {
-            "fechaLiquidacion": ["2024-01-02"],
-            "moneda": ["ARS"],
-            "cantidad": [10],
-        }
-    )
-    fx_df = pd.DataFrame({"fecha": ["2024-01-02"], "tc_mep": [1100]})
-    position_df = pd.DataFrame(
-        {"ticker": ["AL30"], "instrumento": ["AL30"], "cantidad": [10], "monto": [10000]}
-    )
-
-    frames = iter([movements_df, fx_df, position_df])
-    monkeypatch.setattr(pd, "read_excel", lambda _file: next(frames))
-
-    with pytest.raises(IngestError, match="movimientos"):
-        load_inputs("movements.xlsx", "fx.xlsx", "position.xlsx")
-
-
-def test_load_inputs_detects_fx_table_and_normalizes_schema(monkeypatch, capsys):
-    movements_df = pd.DataFrame(
-        {
-            "fechaLiquidacion": ["2024-01-02"],
-            "tipoOperacion": ["Compra"],
-            "total": [-10121],
-            "moneda": ["ARS"],
-        }
-    )
-    fx_raw_df = pd.DataFrame(
+    fx_file = _excel_bytes_from_sheet(
         [
             ["Reporte FX", None, None],
-            ["Generado", "hoy", None],
             ["Fecha", "TC MEP", "TC Cable"],
             ["2024-01-02", "1.100,50", "1.120,00"],
             ["2024-01-03", None, "1.130,00"],
-            ["2024-01-04", "1.140,00", "1.150,00"],
+        ],
+        sheet_name="FX",
+    )
+    position_file = _excel_bytes_from_sheet(
+        [
+            ["Posición valorizada", None, None, None],
+            [" Símbolo ", "Descripción", "Nominales", "Valuación"],
+            ["AL30", "AL30 GD", "100", "150.000,25"],
+            ["TOTAL", "", "", ""],
+        ],
+        sheet_name="Posicion",
+    )
+
+    out = load_inputs(movements_file, fx_file, position_file)
+
+    assert set(["ticker", "instrumento", "cantidad", "monto"]).issubset(out.position.columns)
+    assert out.position.shape[0] == 1
+    assert out.position.loc[0, "ticker"] == "AL30"
+    assert out.position.loc[0, "cantidad"] == 100
+    assert out.position.loc[0, "monto"] == 150000.25
+
+    assert out.diagnostics["posicion"].sheet_name == "Posicion"
+    assert out.diagnostics["posicion"].header_row == 1
+    assert "ticker" in out.diagnostics["posicion"].normalized_columns
+    assert out.diagnostics["posicion"].aliases_applied["ticker"].strip() == "Símbolo"
+
+
+def test_load_inputs_missing_position_columns_raises():
+    movements_file = _excel_bytes_from_sheet(
+        [
+            ["fechaLiquidacion", "tipoOperacion", "total", "moneda"],
+            ["2024-01-02", "Compra", "-100", "ARS"],
         ]
     )
-    position_df = pd.DataFrame(
-        {"ticker": ["AL30"], "instrumento": ["AL30"], "cantidad": [10], "monto": [10000]}
+    fx_file = _excel_bytes_from_sheet([["fecha", "tc_mep"], ["2024-01-02", "1100"]])
+    position_file = _excel_bytes_from_sheet(
+        [
+            ["reporte", None],
+            ["descripcion", "valuacion"],
+            ["AL30", "100"],
+        ]
     )
 
-    def fake_read_excel(_file, **kwargs):
-        if kwargs.get("header", "default") is None:
-            return fx_raw_df
-        if _file == "movements.xlsx":
-            return movements_df
-        if _file == "position.xlsx":
-            return position_df
-        raise AssertionError(f"Unexpected call: {_file}, {kwargs}")
-
-    monkeypatch.setattr(pd, "read_excel", fake_read_excel)
-
-    out = load_inputs("movements.xlsx", "fx.xlsx", "position.xlsx")
-
-    assert list(out.fx.columns) == ["fecha", "tc_mep", "tc_cable"]
-    assert out.fx["fecha"].astype(str).tolist() == ["2024-01-02", "2024-01-03", "2024-01-04"]
-    assert out.fx["tc_mep"].tolist() == [1100.5, 1100.5, 1140.0]
-    assert out.fx["tc_cable"].tolist() == [1120.0, 1130.0, 1150.0]
-
-    captured = capsys.readouterr()
-    assert "Preview FX normalizado:" in captured.out
+    with pytest.raises(IngestError, match="posicion"):
+        load_inputs(movements_file, fx_file, position_file)
